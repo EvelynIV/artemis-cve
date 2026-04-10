@@ -123,6 +123,9 @@ async def run_client(
 
     latest_reply = None
     det_lock = threading.Lock()
+    fps_text = "FPS: --.-"
+    fps_counter = 0
+    fps_window_start = time.perf_counter()
 
     async def recv_detections() -> None:
         nonlocal latest_reply
@@ -143,6 +146,14 @@ async def run_client(
                 image = None
 
             if image is not None:
+                fps_counter += 1
+                now = time.perf_counter()
+                elapsed = now - fps_window_start
+                if elapsed >= 1.0:
+                    fps_text = f"FPS: {fps_counter / elapsed:.1f}"
+                    fps_counter = 0
+                    fps_window_start = now
+
                 with det_lock:
                     det_reply = latest_reply
 
@@ -163,6 +174,15 @@ async def run_client(
                             1,
                         )
 
+                cv2.putText(
+                    image,
+                    fps_text,
+                    (12, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 255, 0),
+                    2,
+                )
                 cv2.imshow("artemis-cve demo", image)
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
