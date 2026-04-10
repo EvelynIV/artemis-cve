@@ -16,13 +16,17 @@ class SharedYoloBoxInferencer(YoloBoxInferencer):
         model_dir: str | Path,
         class_names: Sequence[str] | None = None,
         device: str | torch.device = "cpu",
+        dtype: str = "fp32",
         imgsz: int | None = None,
+        use_cuda_graph: bool | None = None,
     ) -> None:
         super().__init__(
             model_dir=model_dir,
             class_names=class_names,
             device=device,
+            dtype=dtype,
             imgsz=imgsz,
+            use_cuda_graph=use_cuda_graph,
         )
         self._lock = threading.Lock()
 

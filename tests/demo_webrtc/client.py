@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import collections
 import fractions
 import queue
 import signal
@@ -37,6 +38,8 @@ class VideoFileTrack(MediaStreamTrack):
         self._time_base = fractions.Fraction(1, max(1, round(self._fps)))
         self._frame_index = 0
         self.display_queue: queue.Queue = queue.Queue(maxsize=4)
+        self._sent_timestamps_ms: collections.OrderedDict[int, float] = collections.OrderedDict()
+        self._sent_timestamps_lock = threading.Lock()
         self._start = time.time()
 
     async def recv(self) -> VideoFrame:
@@ -60,8 +63,17 @@ class VideoFileTrack(MediaStreamTrack):
         frame = VideoFrame.from_ndarray(bgr, format="bgr24")
         frame.pts = self._frame_index
         frame.time_base = self._time_base
+        pts_ms = int(round(float(frame.pts * frame.time_base) * 1000.0))
+        with self._sent_timestamps_lock:
+            self._sent_timestamps_ms[pts_ms] = time.perf_counter()
+            while len(self._sent_timestamps_ms) > 300:
+                self._sent_timestamps_ms.popitem(last=False)
         self._frame_index += 1
         return frame
+
+    def pop_sent_timestamp(self, pts_ms: int) -> float | None:
+        with self._sent_timestamps_lock:
+            return self._sent_timestamps_ms.pop(pts_ms, None)
 
     def stop(self) -> None:
         super().stop()
@@ -123,14 +135,38 @@ async def run_client(
 
     latest_reply = None
     det_lock = threading.Lock()
-    fps_text = "FPS: --.-"
-    fps_counter = 0
-    fps_window_start = time.perf_counter()
+    display_fps_text = "Display FPS: --.-"
+    display_counter = 0
+    display_window_start = time.perf_counter()
+    detection_fps_text = "Detection FPS: --.-"
+    detection_counter = 0
+    detection_window_start = time.perf_counter()
+    latency_text = "Latency: --.- ms"
+    latency_print_window_start = time.perf_counter()
 
     async def recv_detections() -> None:
-        nonlocal latest_reply
+        nonlocal detection_counter, detection_fps_text, detection_window_start, latest_reply
+        nonlocal latency_print_window_start, latency_text
         try:
             async for det_reply in stub.StreamDetections(pb2.StreamDetectionsRequest(stream_id=stream_id)):
+                detection_counter += 1
+                now = time.perf_counter()
+                elapsed = now - detection_window_start
+                if elapsed >= 1.0:
+                    detection_fps_text = f"Detection FPS: {detection_counter / elapsed:.1f}"
+                    detection_counter = 0
+                    detection_window_start = now
+
+                sent_at = video_track.pop_sent_timestamp(det_reply.pts_ms)
+                if sent_at is not None:
+                    latency_ms = (now - sent_at) * 1000.0
+                    latency_text = f"Latency: {latency_ms:.1f} ms"
+                    if now - latency_print_window_start >= 1.0:
+                        print(
+                            f"[latency] frame_id={det_reply.frame_id} "
+                            f"pts_ms={det_reply.pts_ms} latency_ms={latency_ms:.1f}"
+                        )
+                        latency_print_window_start = now
                 with det_lock:
                     latest_reply = det_reply
         finally:
@@ -146,13 +182,13 @@ async def run_client(
                 image = None
 
             if image is not None:
-                fps_counter += 1
+                display_counter += 1
                 now = time.perf_counter()
-                elapsed = now - fps_window_start
+                elapsed = now - display_window_start
                 if elapsed >= 1.0:
-                    fps_text = f"FPS: {fps_counter / elapsed:.1f}"
-                    fps_counter = 0
-                    fps_window_start = now
+                    display_fps_text = f"Display FPS: {display_counter / elapsed:.1f}"
+                    display_counter = 0
+                    display_window_start = now
 
                 with det_lock:
                     det_reply = latest_reply
@@ -176,11 +212,29 @@ async def run_client(
 
                 cv2.putText(
                     image,
-                    fps_text,
+                    display_fps_text,
                     (12, 28),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8,
+                    0.7,
                     (0, 255, 0),
+                    2,
+                )
+                cv2.putText(
+                    image,
+                    detection_fps_text,
+                    (12, 56),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 255, 255),
+                    2,
+                )
+                cv2.putText(
+                    image,
+                    latency_text,
+                    (12, 84),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (255, 255, 0),
                     2,
                 )
                 cv2.imshow("artemis-cve demo", image)
@@ -192,7 +246,7 @@ async def run_client(
             if video_track.readyState == "ended" and video_track.display_queue.empty():
                 stop_event.set()
                 break
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.001 if image is None else 0)
     finally:
         det_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, grpc.RpcError):

@@ -39,6 +39,7 @@ def main() -> None:
     )
     parser.add_argument("--model-dir", default=str(DEFAULT_MODEL_DIR))
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--dtype", default="fp32", choices=("fp32", "bf16", "fp16"))
     parser.add_argument("--score-threshold", type=float, default=0.25)
     parser.add_argument("--max-detections", type=int, default=20)
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
@@ -49,6 +50,7 @@ def main() -> None:
         model_dir=args.model_dir,
         class_names=class_names,
         device=args.device,
+        dtype=args.dtype,
     )
 
     output_dir = Path(args.output_dir)

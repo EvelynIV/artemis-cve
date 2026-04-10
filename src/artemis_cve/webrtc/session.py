@@ -36,7 +36,8 @@ class WebRtcSession:
         self._video_tasks: set[asyncio.Task] = set()
         self._pending_frame: PendingFrame | None = None
         self._frame_ready = asyncio.Condition()
-        self._smoother = BoxDetectionSmoother(alpha=0.35, match_iou_threshold=0.3)
+        # Favor responsiveness over aggressive smoothing in live streams.
+        self._smoother = BoxDetectionSmoother(alpha=1.0, match_iou_threshold=0.3)
         self.detection_queues: list[asyncio.Queue] = []
 
         self.pc.addTransceiver("video", direction="recvonly")
