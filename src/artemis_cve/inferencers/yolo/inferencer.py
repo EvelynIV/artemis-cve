@@ -175,7 +175,6 @@ class YoloBoxInferencer:
         request_kwargs: dict[str, Any] = {
             "pixel_values": tensor,
             "class_names": list(self.class_names),
-            "conf": float(score_threshold),
         }
         if max_detections is not None and max_detections > 0:
             request_kwargs["max_det"] = int(max_detections)

@@ -129,3 +129,5 @@ class WebRtcDetectorServicer(pb2_grpc.WebRtcDetectorEngineServicer):
             raise
         finally:
             session.detach_detection_queue(det_queue)
+            if not session.running and not session.detection_queues:
+                await self._manager.remove(request.stream_id)

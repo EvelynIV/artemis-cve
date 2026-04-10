@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import fractions
 import queue
+import signal
 import threading
 import time
 from pathlib import Path
@@ -12,6 +14,7 @@ import av
 import cv2
 import grpc
 from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
+from aiortc.mediastreams import MediaStreamError
 from av import VideoFrame
 
 from artemis_cve.protos.detector import common_pb2
@@ -19,7 +22,7 @@ from artemis_cve.protos.detector import webrtc_detector_pb2 as pb2
 from artemis_cve.protos.detector import webrtc_detector_pb2_grpc as pb2_grpc
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_VIDEO_PATH = ROOT / "data-bin" / "videos" / "slow.mp4"
+DEFAULT_VIDEO_PATH = ROOT / "data-bin" / "car.mp4"
 
 
 class VideoFileTrack(MediaStreamTrack):
@@ -40,7 +43,8 @@ class VideoFileTrack(MediaStreamTrack):
         try:
             av_frame = next(self._frames)
         except StopIteration as exc:
-            raise RuntimeError("video ended") from exc
+            self.stop()
+            raise MediaStreamError from exc
 
         target = self._start + self._frame_index / self._fps
         wait = target - time.time()
@@ -59,9 +63,11 @@ class VideoFileTrack(MediaStreamTrack):
         self._frame_index += 1
         return frame
 
-    async def stop(self) -> None:
-        await super().stop()
-        self._container.close()
+    def stop(self) -> None:
+        super().stop()
+        if self._container is not None:
+            self._container.close()
+            self._container = None
 
 
 async def run_client(
@@ -84,6 +90,17 @@ async def run_client(
     print(f"Stream created: {stream_id}")
 
     pc = RTCPeerConnection()
+    stop_event = threading.Event()
+    loop = asyncio.get_running_loop()
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        with contextlib.suppress(NotImplementedError):
+            loop.add_signal_handler(signum, stop_event.set)
+
+    @pc.on("connectionstatechange")
+    async def on_connectionstatechange() -> None:
+        if pc.connectionState in {"failed", "closed", "disconnected"}:
+            stop_event.set()
+
     video_track = VideoFileTrack(video_path)
     pc.addTrack(video_track)
 
@@ -106,13 +123,15 @@ async def run_client(
 
     latest_reply = None
     det_lock = threading.Lock()
-    stop_event = threading.Event()
 
     async def recv_detections() -> None:
         nonlocal latest_reply
-        async for det_reply in stub.StreamDetections(pb2.StreamDetectionsRequest(stream_id=stream_id)):
-            with det_lock:
-                latest_reply = det_reply
+        try:
+            async for det_reply in stub.StreamDetections(pb2.StreamDetectionsRequest(stream_id=stream_id)):
+                with det_lock:
+                    latest_reply = det_reply
+        finally:
+            stop_event.set()
 
     det_task = asyncio.create_task(recv_detections())
 
@@ -154,9 +173,14 @@ async def run_client(
 
     try:
         while not stop_event.is_set():
+            if video_track.readyState == "ended" and video_track.display_queue.empty():
+                stop_event.set()
+                break
             await asyncio.sleep(0.1)
     finally:
         det_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, grpc.RpcError):
+            await det_task
         await pc.close()
         await channel.close()
         stop_event.set()
