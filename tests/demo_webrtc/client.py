@@ -135,44 +135,40 @@ async def run_client(
 
     det_task = asyncio.create_task(recv_detections())
 
-    def display_loop() -> None:
+    try:
         while not stop_event.is_set():
             try:
-                image = video_track.display_queue.get(timeout=0.05)
+                image = video_track.display_queue.get_nowait()
             except queue.Empty:
-                continue
+                image = None
 
-            with det_lock:
-                det_reply = latest_reply
+            if image is not None:
+                with det_lock:
+                    det_reply = latest_reply
 
-            if det_reply and det_reply.detections:
-                for detection in det_reply.detections:
-                    if not detection.geometry.HasField("box"):
-                        continue
-                    box = detection.geometry.box
-                    x1, y1, x2, y2 = map(int, [box.x_min, box.y_min, box.x_max, box.y_max])
-                    cv2.rectangle(image, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                    cv2.putText(
-                        image,
-                        f"{detection.class_name} {detection.score:.3f}",
-                        (x1, max(20, y1 - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (0, 0, 255),
-                        1,
-                    )
+                if det_reply and det_reply.detections:
+                    for detection in det_reply.detections:
+                        if not detection.geometry.HasField("box"):
+                            continue
+                        box = detection.geometry.box
+                        x1, y1, x2, y2 = map(int, [box.x_min, box.y_min, box.x_max, box.y_max])
+                        cv2.rectangle(image, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                        cv2.putText(
+                            image,
+                            f"{detection.class_name} {detection.score:.3f}",
+                            (x1, max(20, y1 - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (0, 0, 255),
+                            1,
+                        )
 
-            cv2.imshow("artemis-cve demo", image)
+                cv2.imshow("artemis-cve demo", image)
+
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 stop_event.set()
                 break
-        cv2.destroyAllWindows()
 
-    display_thread = threading.Thread(target=display_loop, daemon=True)
-    display_thread.start()
-
-    try:
-        while not stop_event.is_set():
             if video_track.readyState == "ended" and video_track.display_queue.empty():
                 stop_event.set()
                 break
@@ -184,7 +180,7 @@ async def run_client(
         await pc.close()
         await channel.close()
         stop_event.set()
-        display_thread.join(timeout=2)
+        cv2.destroyAllWindows()
 
 
 def main() -> None:
