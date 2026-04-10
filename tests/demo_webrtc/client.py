@@ -186,7 +186,7 @@ async def run_client(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Demo WebRTC client for artemis-cve.")
     parser.add_argument("--server", default="192.168.1.24:50051")
-    parser.add_argument("--video", default=str("data-bin/car.mp4"))
+    parser.add_argument("--video", default=str("data-bin/1082895552-1-208.mp4"))
     parser.add_argument("--score-threshold", type=float, default=0.25)
     args = parser.parse_args()
     asyncio.run(
