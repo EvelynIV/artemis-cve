@@ -22,11 +22,15 @@ class WebRtcDetectorServicer(pb2_grpc.WebRtcDetectorEngineServicer):
         model_dir: str,
         class_names: Sequence[str],
         device: str,
+        dtype: str,
+        use_cuda_graph: bool = False,
     ) -> None:
         self._manager = WebRtcSessionManager(
             model_dir=model_dir,
             class_names=class_names,
             device=device,
+            dtype=dtype,
+            use_cuda_graph=use_cuda_graph,
         )
 
     @staticmethod

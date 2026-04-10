@@ -19,6 +19,7 @@ def main() -> None:
     parser.add_argument("--score-threshold", type=float, default=0.25)
     parser.add_argument("--max-detections", type=int, default=20)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--dtype", default="fp32", choices=("fp32", "bf16", "fp16"))
     args = parser.parse_args()
 
     bgr = cv2.imread(args.image)
@@ -29,6 +30,7 @@ def main() -> None:
         model_dir=args.model_dir,
         class_names=[item.strip() for item in args.class_names.split(",") if item.strip()],
         device=args.device,
+        dtype=args.dtype,
     )
     detections = inferencer.infer(
         bgr=bgr,

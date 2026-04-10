@@ -1,3 +1,3 @@
-from artemis_cve.inferencers.yolo import BoxDetection, SharedYoloBoxInferencer, YoloBoxInferencer
+from .models import ensure_model_registrations
 
-__all__ = ["BoxDetection", "SharedYoloBoxInferencer", "YoloBoxInferencer"]
+__all__ = ["ensure_model_registrations"]

@@ -11,6 +11,9 @@ from transformers import AutoConfig, AutoModel
 from ultralytics.data.augment import LetterBox
 from ultralytics.utils.ops import scale_boxes
 
+from artemis_cve.models.yolo26e import YOLOEModel
+from artemis_cve.models.yolo26e_cuda_graph import CUDAGraphYOLOEModel
+
 
 @dataclass(frozen=True, slots=True)
 class BoxDetection:
@@ -41,20 +44,37 @@ class BoxDetection:
 
 class YoloBoxInferencer:
     DEFAULT_IMGSZ = 640
+    DTYPE_MAP: dict[str, torch.dtype] = {
+        "fp32": torch.float32,
+        "bf16": torch.bfloat16,
+        "fp16": torch.float16,
+    }
 
     def __init__(
         self,
         model_dir: str | Path,
         class_names: Sequence[str] | None = None,
         device: str | torch.device = "cpu",
+        dtype: str = "fp32",
         imgsz: int | None = None,
+        use_cuda_graph: bool | None = None,
     ) -> None:
         self.model_dir = Path(model_dir)
         self.device = torch.device(device)
+        self.dtype_name = str(dtype).strip().lower()
+        self.dtype = self._resolve_dtype(self.dtype_name)
 
-        self.config = AutoConfig.from_pretrained(str(self.model_dir), trust_remote_code=True)
-        self.model = AutoModel.from_pretrained(str(self.model_dir), trust_remote_code=True)
-        self.model.to(self.device)
+        self.config = AutoConfig.from_pretrained(str(self.model_dir))
+        self.model = AutoModel.from_pretrained(
+            str(self.model_dir),
+            dtype=self.dtype,
+        )
+        self.use_cuda_graph = bool(self.device.type == "cuda") if use_cuda_graph is None else bool(use_cuda_graph)
+        if self.use_cuda_graph and self.device.type != "cuda":
+            raise ValueError("use_cuda_graph=True requires a CUDA device.")
+        if self.use_cuda_graph and isinstance(self.model, YOLOEModel) and not isinstance(self.model, CUDAGraphYOLOEModel):
+            self.model = CUDAGraphYOLOEModel.from_base(self.model)
+        self.model.to(device=self.device, dtype=self.dtype)
         self.model.eval()
 
         default_class_names = tuple(str(name) for name in getattr(self.config, "default_classes", []) if str(name))
@@ -77,6 +97,14 @@ class YoloBoxInferencer:
             scaleup=True,
             stride=self.stride,
         )
+
+    @classmethod
+    def _resolve_dtype(cls, dtype: str) -> torch.dtype:
+        resolved_dtype = cls.DTYPE_MAP.get(dtype)
+        if resolved_dtype is None:
+            supported = ", ".join(cls.DTYPE_MAP)
+            raise ValueError(f"Unsupported dtype '{dtype}'. Expected one of: {supported}.")
+        return resolved_dtype
 
     def _resolve_class_name(self, class_id: int) -> str:
         if 0 <= class_id < len(self.class_names):
@@ -105,10 +133,10 @@ class YoloBoxInferencer:
             torch.from_numpy(processed)
             .permute(2, 0, 1)
             .contiguous()
-            .float()
             .unsqueeze(0)
+            .to(device=self.device, dtype=self.dtype)
             / 255.0
-        ).to(self.device)
+        )
         return tensor, tuple(int(v) for v in rgb.shape[:2]), tuple(int(v) for v in processed.shape[:2])
 
     def _convert_outputs(
