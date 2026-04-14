@@ -7,9 +7,9 @@ import cv2
 
 from artemis_cve.inferencers.yolo import YoloBoxInferencer
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MODEL_DIR = ROOT / "model-bin" / "hf_yoloe"
-DEFAULT_OUTPUT_DIR = ROOT / "data-bin" / "demo-outputs"
+DEFAULT_MODEL_DIR = Path("model-bin/MigoXV/yoloe26-x-seg")
+DEFAULT_TEXT_ENCODER_MODEL_DIR = Path("model-bin/MigoXV/mobileclip2-b")
+DEFAULT_OUTPUT_DIR = Path("data-bin/demo-outputs")
 
 
 def draw_boxes(image, detections):
@@ -38,7 +38,9 @@ def main() -> None:
         help="Comma-separated class names for open-vocabulary inference.",
     )
     parser.add_argument("--model-dir", default=str(DEFAULT_MODEL_DIR))
+    parser.add_argument("--textencoder-model-dir", default=str(DEFAULT_TEXT_ENCODER_MODEL_DIR))
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--dtype", default="fp32", choices=("fp32", "bf16", "fp16"))
     parser.add_argument("--score-threshold", type=float, default=0.25)
     parser.add_argument("--max-detections", type=int, default=20)
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
@@ -47,8 +49,10 @@ def main() -> None:
     class_names = [item.strip() for item in args.class_names.split(",") if item.strip()]
     inferencer = YoloBoxInferencer(
         model_dir=args.model_dir,
+        textencoder_model_dir=args.textencoder_model_dir,
         class_names=class_names,
         device=args.device,
+        dtype=args.dtype,
     )
 
     output_dir = Path(args.output_dir)
